@@ -1,12 +1,14 @@
 #pragma once
-#include <stdio.h>
-#include <stdint.h>
-#include <assert.h>
+#include <cstdio>
+#include <cstdint>
+#include <cstdlib>
+#include <cassert>
+
 #include <queue>
 #include <vector>
 #include <Windows.h>
-#include <assert.h>
-#include <cstdlib>
+
+
 
 #ifndef INFINITE
 #define INFINITE 0xFFFFFFFF
@@ -14,17 +16,17 @@
 
 class JobSystem;
 
-class job
+//Base class for all jobs to be pushed to the system, uses a semaphore to keep track of if it has been completed.
+class Job
 {
 public:
-	job(JobSystem* jobSys)
-		:jobSystem(jobSys)
+	Job(JobSystem* jobSys)
+		:pJobSystem(jobSys), mJobsemaphore(CreateSemaphoreA(nullptr, 0, 1, nullptr)
 	{
-		jobsemaphore = CreateSemaphoreA(nullptr, 0, 1, nullptr);
+		//jobsemaphore = CreateSemaphoreA(nullptr, 0, 1, nullptr);
 	}
 
 	virtual void operator ()() = 0;
-	JobSystem* jobSystem;
 
 	void Signal() {
 		ReleaseSemaphore(jobsemaphore, 1, nullptr);
@@ -33,19 +35,21 @@ public:
 		WaitForSingleObject(jobsemaphore, INFINITE);
 	}
 
-	HANDLE				jobsemaphore;
+	HANDLE		mJobsemaphore;
+	JobSystem*	pJobSystem;
 };
 
-class job_delegate : public job
+//This delegate job inherits from job. Uses void pointers to allow for flexibility in usage.
+class JobDelegate : public Job
 {
 public:
-	job_delegate(JobSystem* jobSys) : job(jobSys), fptr(nullptr), param(nullptr) {}
-	job_delegate(JobSystem* jobSys, void(*f)(void*), void* p) : job(jobSys), fptr(f), param(p) {}
+	JobDelegate(JobSystem* jobSys) : Job(jobSys), mfptr(nullptr), mParam(nullptr) {}
+	JobDelegate(JobSystem* jobSys, void(*f)(void*), void* p) : Job(jobSys), mfptr(f), mParam(p) {}
 
-	void operator()() override;
+	void operator()();
 
-	void(*fptr)(void*);
-	void* param;
+	void(*mfptr)(void*);
+	void* mParam;
 };
 
 class JobSystem
@@ -54,7 +58,7 @@ public:
 	JobSystem(uint32_t worker_thread_count);
 	~JobSystem(void);
 
-	void add_job(job* j);
+	void add_job(Job* j);
 	void lock_mutex();
 	void unlock_mutex();
 
@@ -70,7 +74,7 @@ private:
 	HANDLE				semaphore;
 	SRWLOCK				mutex;
 	SRWLOCK				jobmutex;
-	std::queue<job*>	job_queue;
+	std::queue<Job*>	job_queue;
 	bool				thread_shutdown;
 };
 
@@ -104,7 +108,7 @@ JobSystem::~JobSystem(void)
 	free(threads);
 }
 
-void JobSystem::add_job(job* j)
+void JobSystem::add_job(Job* j)
 {
 	AcquireSRWLockExclusive(&mutex);
 	job_queue.push(j);
@@ -137,7 +141,7 @@ void JobSystem::do_worker_thread(void)
 	{
 		WaitForSingleObject(semaphore, INFINITE);
 
-		job* job = nullptr;
+		Job* job = nullptr;
 		AcquireSRWLockExclusive(&mutex);
 		if (!job_queue.empty())
 		{
@@ -146,7 +150,7 @@ void JobSystem::do_worker_thread(void)
 		}
 		ReleaseSRWLockExclusive(&mutex);
 
-		// Do job
+		// Do Job
 		if (job)
 			(*job)();
 		else if (thread_shutdown)
@@ -165,7 +169,7 @@ DWORD JobSystem::worker_thread(void* user_data)
 }
 
 
-void job_delegate::operator()()
+void JobDelegate::operator()()
 {
-	fptr(param);
+	mfptr(mParam);
 }
